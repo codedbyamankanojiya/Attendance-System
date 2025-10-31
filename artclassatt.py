@@ -132,69 +132,506 @@ def show_fees_details():
         messagebox.showwarning("Select Student", "Please select a student first!")
         return
         
-    roll_no = treeview.item(treeview.selection()[0])["values"][0]
-    fees_info = calculate_fees_status(roll_no)
+    selected_item = treeview.selection()[0]
+    roll_no = treeview.item(selected_item)["values"][0]
+    student_name = treeview.item(selected_item)["values"][1]
     
-    if not fees_info:
+    # Get complete student details including email
+    cursor.execute("""
+        SELECT email, total_fees, fees_paid, course_end_date 
+        FROM students 
+        WHERE roll_no = ?
+    """, (roll_no,))
+    
+    student_data = cursor.fetchone()
+    if not student_data:
+        messagebox.showerror("Error", "Student not found in database!")
         return
         
+    email, total_fees, fees_paid, course_end_date = student_data
+    remaining = float(total_fees) - float(fees_paid)
+    days_left = (datetime.strptime(course_end_date, "%Y-%m-%d").date() - datetime.now().date()).days
+    status = "Completed" if remaining <= 0 else "Pending"
+    
+    # Create the fees window with better styling
     fees_window = tb.Toplevel(root)
-    fees_window.title("Fees Details")
-    fees_window.geometry("400x300")
+    fees_window.title(f"Fees Management - {student_name} ({roll_no})")
+    fees_window.geometry("500x450")
     
-    # Create a styled frame
-    frame = tb.Frame(fees_window)
-    frame.pack(fill='both', expand=True, padx=20, pady=20)
+    # Main container
+    main_frame = tb.Frame(fees_window, padding=20)
+    main_frame.pack(fill='both', expand=True)
     
-    # Add fees information
-    info_text = f"""
-    Total Fees: ₹{fees_info['total']}
-    Fees Paid: ₹{fees_info['paid']}
-    Remaining: ₹{fees_info['remaining']}
-    Days Left: {fees_info['days_left']}
-    Status: {fees_info['status']}
-    """
+    # Header
+    header_frame = tb.Frame(main_frame)
+    header_frame.pack(fill='x', pady=(0, 20))
     
-    label = tb.Label(frame, text=info_text, font=("Helvetica", 12))
-    label.pack(pady=20)
+    tb.Label(header_frame, 
+             text=f"Fees Management", 
+             font=("Helvetica", 16, "bold"),
+             bootstyle="primary").pack(anchor='w')
     
-    if fees_info['remaining'] > 0:
-        def update_fees():
+    # Student info section
+    info_frame = tb.LabelFrame(main_frame, text="Student Information", padding=15)
+    info_frame.pack(fill='x', pady=(0, 20))
+    
+    info_grid = tb.Frame(info_frame)
+    info_grid.pack(fill='x')
+    
+    def add_info_row(label, value, row):
+        lbl = tb.Label(info_grid, text=label, font=("Helvetica", 10, "bold"), width=15, anchor='w')
+        lbl.grid(row=row, column=0, sticky='w', pady=2)
+        val = tb.Label(info_grid, text=str(value), font=("Helvetica", 10))
+        val.grid(row=row, column=1, sticky='w', pady=2, padx=5)
+    
+    add_info_row("Student:", f"{student_name} ({roll_no})", 0)
+    add_info_row("Email:", email, 1)
+    add_info_row("Course End Date:", course_end_date, 2)
+    
+    # Fees summary section
+    summary_frame = tb.LabelFrame(main_frame, text="Fees Summary", padding=15)
+    summary_frame.pack(fill='x', pady=(0, 20))
+    
+    # Styling for the summary
+    style = tb.Style()
+    style.configure('Fees.TLabel', font=('Helvetica', 11))
+    style.configure('Amount.TLabel', font=('Helvetica', 11, 'bold'))
+    
+    # Create a grid for the summary
+    summary_grid = tb.Frame(summary_frame)
+    summary_grid.pack(fill='x')
+    
+    # Add summary rows
+    def add_summary_row(label, value, row, style='Fees.TLabel'):
+        lbl = tb.Label(summary_grid, text=label, style=style, width=15, anchor='w')
+        lbl.grid(row=row, column=0, sticky='w', pady=3)
+        val = tb.Label(summary_grid, text=f"₹{value:,.2f}", style='Amount.TLabel')
+        val.grid(row=row, column=1, sticky='e', pady=3, padx=10)
+    
+    add_summary_row("Total Fees:", float(total_fees), 0)
+    add_summary_row("Paid:", float(fees_paid), 1)
+    
+    # Calculate and show remaining with color coding
+    remaining = float(total_fees) - float(fees_paid)
+    remaining_style = 'success' if remaining <= 0 else 'danger' if remaining > 0 and days_left < 0 else 'warning'
+    
+    remaining_lbl = tb.Label(summary_grid, text="Remaining:", style='Fees.TLabel', width=15, anchor='w')
+    remaining_lbl.grid(row=2, column=0, sticky='w', pady=3)
+    remaining_val = tb.Label(summary_grid, text=f"₹{remaining:,.2f}", 
+                           style=f'{remaining_style}.Inverse.TLabel',
+                           padding=(10, 2))
+    remaining_val.grid(row=2, column=1, sticky='e', pady=3, padx=10)
+    
+    # Status with days left
+    status_text = f"{status}"
+    if status == "Pending":
+        status_text += f" ({abs(days_left)} days {'overdue' if days_left < 0 else 'left'})"
+    
+    status_lbl = tb.Label(summary_grid, text="Status:", style='Fees.TLabel', width=15, anchor='w')
+    status_lbl.grid(row=3, column=0, sticky='w', pady=3)
+    status_val = tb.Label(summary_grid, text=status_text, 
+                         style=f'{remaining_style}.Inverse.TLabel',
+                         padding=(10, 2))
+    status_val.grid(row=3, column=1, sticky='e', pady=3, padx=10)
+    
+    # Payment form (only if fees are pending)
+    if remaining > 0:
+        payment_frame = tb.LabelFrame(main_frame, text="Record Payment", padding=15)
+        payment_frame.pack(fill='x')
+        
+        amount_frame = tb.Frame(payment_frame)
+        amount_frame.pack(fill='x', pady=10)
+        
+        tb.Label(amount_frame, text="Amount (₹):", width=15, anchor='w').pack(side='left')
+        
+        amount_var = tb.StringVar()
+        amount_entry = tb.Entry(amount_frame, textvariable=amount_var,
+                              validate='key', 
+                              validatecommand=(fees_validate, '%P'),
+                              width=15)
+        amount_entry.pack(side='left', padx=5)
+        
+        # Add max button
+        def set_max_amount():
+            amount_var.set(f"{remaining:.2f}")
+        
+        max_btn = tb.Button(amount_frame, text="Full Amount", 
+                          command=set_max_amount,
+                          bootstyle="outline",
+                          width=12)
+        max_btn.pack(side='left', padx=5)
+        
+        # Payment date
+        date_frame = tb.Frame(payment_frame)
+        date_frame.pack(fill='x', pady=10)
+        
+        tb.Label(date_frame, text="Payment Date:", width=15, anchor='w').pack(side='left')
+        
+        today = datetime.now().strftime("%d/%m/%Y")
+        date_entry = tb.DateEntry(date_frame, bootstyle="primary",
+                                dateformat="%d/%m/%Y",
+                                startdate=today)
+        date_entry.pack(side='left', padx=5)
+        
+        # Payment method
+        method_frame = tb.Frame(payment_frame)
+        method_frame.pack(fill='x', pady=10)
+        
+        tb.Label(method_frame, text="Payment Method:", width=15, anchor='w').pack(side='left')
+        
+        method_var = tb.StringVar(value="Cash")
+        methods = ["Cash", "Credit Card", "Bank Transfer", "UPI", "Cheque"]
+        
+        for method in methods:
+            rb = tb.Radiobutton(method_frame, text=method, 
+                              variable=method_var, 
+                              value=method)
+            rb.pack(side='left', padx=5)
+        
+        # Submit button
+        def process_payment():
             try:
-                amount = float(amount_entry.get())
+                amount = float(amount_var.get())
                 if amount <= 0:
                     raise ValueError("Amount must be positive")
                     
-                new_paid = float(fees_info['paid']) + amount
-                if new_paid > float(fees_info['total']):
-                    raise ValueError("Amount exceeds total fees")
-                    
+                if amount > remaining:
+                    raise ValueError(f"Amount cannot exceed remaining balance of ₹{remaining:,.2f}")
+                
+                payment_date = datetime.strptime(date_entry.entry.get(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                payment_method = method_var.get()
+                
+                # Update fees paid in students table
+                new_paid = float(fees_paid) + amount
                 cursor.execute("""
                     UPDATE students
                     SET fees_paid = ?
                     WHERE roll_no = ?
                 """, (new_paid, roll_no))
+                
+                # Record payment in payments table (create if not exists)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS payments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        roll_no TEXT,
+                        amount REAL,
+                        payment_date TEXT,
+                        method TEXT,
+                        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(roll_no) REFERENCES students(roll_no)
+                    )
+                ''')
+                
+                cursor.execute('''
+                    INSERT INTO payments (roll_no, amount, payment_date, method)
+                    VALUES (?, ?, ?, ?)
+                ''', (roll_no, amount, payment_date, payment_method))
+                
                 conn.commit()
                 
-                messagebox.showinfo("Success", f"Fees updated! Remaining: ₹{float(fees_info['total']) - new_paid}")
+                # Send payment receipt
+                receipt_message = f"""
+                Payment Receipt
+                -----------------
+                
+                Student: {student_name}
+                Roll No: {roll_no}
+                Date: {payment_date}
+                Amount: ₹{amount:,.2f}
+                Method: {payment_method}
+                
+                Thank you for your payment!
+                """
+                
+                if send_email_notification(email, "Payment Receipt", receipt_message):
+                    messagebox.showinfo("Success", 
+                        f"Payment of ₹{amount:,.2f} recorded successfully!\n"
+                        f"Receipt has been sent to {email}.")
+                else:
+                    messagebox.showinfo("Success", 
+                        f"Payment of ₹{amount:,.2f} recorded successfully!\n"
+                        "(Email notification failed to send)")
+                
                 fees_window.destroy()
-                view_students()  # Refresh view
+                view_students()  # Refresh the student list
                 
             except ValueError as e:
                 messagebox.showerror("Error", str(e))
         
-        # Add payment entry
-        amount_frame = tb.Frame(frame)
-        amount_frame.pack(fill='x', pady=10)
+        btn_frame = tb.Frame(payment_frame)
+        btn_frame.pack(pady=(20, 5))
         
-        tb.Label(amount_frame, text="Enter Amount: ₹").pack(side='left')
-        amount_entry = tb.Entry(amount_frame, validate='key', 
-                              validatecommand=(fees_validate, '%P'))
-        amount_entry.pack(side='left', padx=5)
+        tb.Button(btn_frame, text="Record Payment", 
+                 command=process_payment,
+                 bootstyle="success",
+                 width=15).pack(side='left', padx=5)
         
-        tb.Button(frame, text="Pay Fees", 
-                 command=update_fees,
-                 bootstyle="success").pack(pady=10)
+        tb.Button(btn_frame, text="Print Receipt",
+                 command=lambda: print_receipt(roll_no, student_name, email, 
+                                             amount_var.get() or "0.00",
+                                             date_entry.entry.get(),
+                                             method_var.get()),
+                 bootstyle="info",
+                 width=15).pack(side='left', padx=5)
+    
+    # Add payment history section
+    cursor.execute('''
+        SELECT payment_date, amount, method 
+        FROM payments 
+        WHERE roll_no = ? 
+        ORDER BY payment_date DESC 
+        LIMIT 5
+    ''', (roll_no,))
+    
+    payments = cursor.fetchall()
+    
+    if payments:
+        history_frame = tb.LabelFrame(main_frame, text="Recent Payments", padding=15)
+        history_frame.pack(fill='x', pady=(20, 0))
+        
+        # Create a treeview for payment history
+        columns = ("Date", "Amount", "Method")
+        tree = ttk.Treeview(history_frame, columns=columns, show='headings', height=min(5, len(payments)))
+        
+        # Configure columns
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100, anchor='center')
+        
+        # Add data
+        for payment in payments:
+            date, amount, method = payment
+            tree.insert("", "end", values=(
+                date,
+                f"₹{float(amount):,.2f}",
+                method
+            ))
+        
+        tree.pack(fill='x')
+        
+        # Add view all payments button if there are more than 5
+        if len(payments) >= 5:
+            tb.Button(history_frame, 
+                     text="View All Payments",
+                     command=lambda: show_payment_history(roll_no, student_name),
+                     bootstyle="link").pack(pady=(5, 0))
+
+def print_receipt(roll_no, name, email, amount, date, method):
+    """Generate a printable receipt"""
+    try:
+        amount = float(amount)
+        if amount <= 0:
+            raise ValueError("Please enter a valid amount first")
+            
+        receipt = f"""
+        ╔══════════════════════════════╗
+        ║      ART CLASS PAYMENT       ║
+        ╚══════════════════════════════╝
+        
+        Receipt No: {receipt_no:06d}
+        Date: {date}
+        
+        Student: {name}
+        Roll No: {roll_no}
+        
+        Amount: ₹{amount:,.2f}
+        Method: {method}
+        
+        Thank you for your payment!
+        
+        {datetime.now().strftime('%d/%m/%Y %I:%M %p')}
+        """.format(
+            receipt_no=hash(f"{roll_no}{date}{amount}") % 1000000,
+            name=name,
+            roll_no=roll_no,
+            amount=amount,
+            date=date,
+            method=method
+        )
+        
+        # Show receipt in a messagebox
+        messagebox.showinfo("Payment Receipt", receipt)
+        
+        # Option to email receipt
+        if messagebox.askyesno("Email Receipt", "Would you like to email this receipt?"):
+            if send_email_notification(email, "Payment Receipt - Art Class", receipt):
+                messagebox.showinfo("Success", "Receipt has been sent to your email!")
+            else:
+                messagebox.showwarning("Email Failed", "Failed to send email. Please check your email settings.")
+                
+    except ValueError as e:
+        messagebox.showerror("Error", str(e))
+
+def show_payment_history(roll_no, student_name):
+    """Show complete payment history for a student"""
+    cursor.execute('''
+        SELECT payment_date, amount, method 
+        FROM payments 
+        WHERE roll_no = ? 
+        ORDER BY payment_date DESC
+    ''', (roll_no,))
+    
+    payments = cursor.fetchall()
+    
+    if not payments:
+        messagebox.showinfo("No Payments", "No payment history found for this student.")
+        return
+    
+    history_window = tb.Toplevel(root)
+    history_window.title(f"Payment History - {student_name} ({roll_no})")
+    history_window.geometry("800x600")
+    
+    # Main frame
+    main_frame = tb.Frame(history_window, padding=20)
+    main_frame.pack(fill='both', expand=True)
+    
+    # Header
+    tb.Label(main_frame, 
+             text=f"Payment History - {student_name}", 
+             font=("Helvetica", 14, "bold"),
+             bootstyle="primary").pack(anchor='w', pady=(0, 20))
+    
+    # Summary frame
+    summary_frame = tb.Frame(main_frame)
+    summary_frame.pack(fill='x', pady=(0, 20))
+    
+    # Calculate totals
+    total_paid = sum(p[1] for p in payments)
+    
+    # Get total fees from students table
+    cursor.execute('SELECT total_fees FROM students WHERE roll_no = ?', (roll_no,))
+    total_fees = cursor.fetchone()[0]
+    
+    # Summary labels
+    tb.Label(summary_frame, 
+             text=f"Total Fees: ₹{float(total_fees):,.2f}",
+             font=("Helvetica", 12, "bold")).pack(side='left', padx=10)
+    
+    tb.Label(summary_frame, 
+             text=f"Total Paid: ₹{total_paid:,.2f}",
+             font=("Helvetica", 12, "bold"),
+             bootstyle="success").pack(side='left', padx=10)
+    
+    remaining = float(total_fees) - total_paid
+    remaining_style = "success" if remaining <= 0 else "danger" if remaining > 0 and any(p[0] < datetime.now().date().isoformat() for p in payments) else "warning"
+    
+    tb.Label(summary_frame, 
+             text=f"Remaining: ₹{remaining:,.2f}",
+             font=("Helvetica", 12, "bold"),
+             bootstyle=remaining_style).pack(side='left', padx=10)
+    
+    # Treeview for payment history
+    columns = ("Date", "Amount", "Payment Method", "Days Since Payment")
+    tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=20)
+    
+    # Configure columns
+    col_widths = {"Date": 120, "Amount": 100, "Payment Method": 150, "Days Since Payment": 120}
+    for col in columns:
+        tree.heading(col, text=col)
+        tree.column(col, width=col_widths.get(col, 100), anchor='center')
+    
+    # Add data
+    for payment in payments:
+        payment_date = datetime.strptime(payment[0], "%Y-%m-%d").date()
+        days_since = (datetime.now().date() - payment_date).days
+        
+        tree.insert("", "end", values=(
+            payment[0],
+            f"₹{float(payment[1]):,.2f}",
+            payment[2],
+            f"{days_since} days ago" if days_since > 0 else "Today" if days_since == 0 else "Future date"
+        ))
+    
+    # Add scrollbars
+    y_scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=tree.yview)
+    x_scrollbar = ttk.Scrollbar(main_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
+    
+    # Grid layout
+    tree.pack(side='left', fill='both', expand=True)
+    y_scrollbar.pack(side='right', fill='y')
+    x_scrollbar.pack(side='bottom', fill='x')
+    
+    # Export button
+    def export_payments():
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"payments_{roll_no}_{datetime.now().strftime('%Y%m%d')}.csv"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Date", "Amount", "Payment Method"])
+                    for payment in payments:
+                        writer.writerow([payment[0], payment[1], payment[2]])
+                messagebox.showinfo("Success", f"Payment history exported to {filename}")
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed to export: {str(e)}")
+    
+    btn_frame = tb.Frame(main_frame)
+    btn_frame.pack(fill='x', pady=(10, 0))
+    
+    tb.Button(btn_frame, 
+             text="Export to CSV", 
+             command=export_payments,
+             bootstyle="info").pack(side='left', padx=5)
+    
+    tb.Button(btn_frame, 
+             text="Print Statement", 
+             command=lambda: print_statement(roll_no, student_name, payments, total_fees),
+             bootstyle="secondary").pack(side='left', padx=5)
+
+def print_statement(roll_no, student_name, payments, total_fees):
+    """Generate a printable statement of account"""
+    statement = f"""
+    ╔══════════════════════════════╗
+    ║   STATEMENT OF ACCOUNT      ║
+    ╚══════════════════════════════╝
+    
+    Student: {student_name}
+    Roll No: {roll_no}
+    
+    As of: {datetime.now().strftime('%d %m %Y %I:%M %p')}
+    
+    {'-'*50}
+    {'Date':<15} {'Description':<25} {'Amount':>10}
+    {'-'*50}
+    """
+    
+    # Add payments
+    total_paid = 0
+    for payment in payments:
+        date, amount, method = payment
+        statement += f"{date:<15} {'Payment (' + method + ')':<25} {float(amount):>10,.2f}\n"
+        total_paid += float(amount)
+    
+    statement += f"{'='*50}\n"
+    statement += f"{'Total Fees:':<40} {float(total_fees):>10,.2f}\n"
+    statement += f"{'Total Paid:':<40} {total_paid:>10,.2f}\n"
+    statement += f"{'Balance:':<40} {(float(total_fees) - total_paid):>10,.2f}\n"
+    statement += f"{'='*50}\n"
+    
+    # Show statement in a messagebox
+    messagebox.showinfo("Account Statement", statement)
+    
+    # Option to print or save as text file
+    if messagebox.askyesno("Save Statement", "Would you like to save this statement to a file?"):
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=f"statement_{roll_no}_{datetime.now().strftime('%Y%m%d')}.txt"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w') as f:
+                    f.write(statement)
+                messagebox.showinfo("Success", f"Statement saved to {filename}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save file: {str(e)}")
 
 def export_to_csv(data, filename):
     try:
@@ -672,12 +1109,153 @@ def clear_entries():
 
 # GUI Setup
 root = tb.Window(themename="darkly")
-root.title("Art Class Attendance System")
-root.geometry("1400x900")
+root.title("🎨 Art Class Attendance System")
+root.geometry("1600x950")
+root.state('zoomed')  # Start maximized
 create_custom_style()
 
-# Create main container with gradient background
-main_container = tb.Frame(root)
+# Add status bar at bottom
+status_bar = tb.Frame(root, bootstyle="dark")
+status_bar.pack(side='bottom', fill='x')
+
+status_label = tb.Label(status_bar, text="Ready", font=("Helvetica", 9))
+status_label.pack(side='left', padx=10, pady=5)
+
+time_label = tb.Label(status_bar, text="", font=("Helvetica", 9))
+time_label.pack(side='right', padx=10, pady=5)
+
+def update_time():
+    current_time = datetime.now().strftime("%d %B %Y, %I:%M:%S %p")
+    time_label.config(text=current_time)
+    root.after(1000, update_time)
+
+update_time()
+
+# Create notebook for tabbed interface
+notebook = tb.Notebook(root, bootstyle="primary")
+notebook.pack(fill='both', expand=True, padx=10, pady=10)
+
+# Tab 1: Dashboard
+dashboard_tab = tb.Frame(notebook)
+notebook.add(dashboard_tab, text="📊 Dashboard")
+
+# Tab 2: Students
+students_tab = tb.Frame(notebook)
+notebook.add(students_tab, text="👥 Students")
+
+# Tab 3: Attendance
+attendance_tab = tb.Frame(notebook)
+notebook.add(attendance_tab, text="✓ Attendance")
+
+# Tab 4: Reports
+reports_tab = tb.Frame(notebook)
+notebook.add(reports_tab, text="📈 Reports")
+
+# Tab 5: Fees
+fees_tab = tb.Frame(notebook)
+notebook.add(fees_tab, text="💰 Fees")
+
+# ==================== DASHBOARD TAB ====================
+dashboard_container = tb.Frame(dashboard_tab)
+dashboard_container.pack(fill='both', expand=True, padx=20, pady=20)
+
+# Dashboard Header
+dash_header = tb.Label(dashboard_container, 
+                       text="📊 Dashboard Overview",
+                       font=("Helvetica", 24, "bold"),
+                       bootstyle="inverse-primary")
+dash_header.pack(pady=(0, 20))
+
+# Statistics Cards Row
+stats_frame = tb.Frame(dashboard_container)
+stats_frame.pack(fill='x', pady=(0, 20))
+
+def create_stat_card(parent, title, value, icon, color):
+    card = tb.Frame(parent, bootstyle=f"{color}")
+    card.pack(side='left', fill='both', expand=True, padx=10)
+    
+    inner = tb.Frame(card, bootstyle=f"{color}")
+    inner.pack(fill='both', expand=True, padx=20, pady=20)
+    
+    tb.Label(inner, text=icon, font=("Helvetica", 36), 
+             bootstyle=f"{color}").pack()
+    tb.Label(inner, text=str(value), font=("Helvetica", 32, "bold"),
+             bootstyle=f"{color}").pack()
+    tb.Label(inner, text=title, font=("Helvetica", 12),
+             bootstyle=f"{color}").pack()
+    
+    return card
+
+# Get statistics
+cursor.execute("SELECT COUNT(*) FROM students")
+total_students = cursor.fetchone()[0]
+
+cursor.execute("SELECT COUNT(DISTINCT roll_no) FROM attendance WHERE date = ?", 
+               (datetime.now().strftime("%Y-%m-%d"),))
+today_attendance = cursor.fetchone()[0]
+
+cursor.execute("SELECT COUNT(*) FROM students WHERE course_end_date >= ?",
+               (datetime.now().strftime("%Y-%m-%d"),))
+active_courses = cursor.fetchone()[0]
+
+cursor.execute("SELECT SUM(total_fees - fees_paid) FROM students")
+pending_fees = cursor.fetchone()[0] or 0
+
+create_stat_card(stats_frame, "Total Students", total_students, "👥", "info")
+create_stat_card(stats_frame, "Today's Attendance", today_attendance, "✓", "success")
+create_stat_card(stats_frame, "Active Courses", active_courses, "📚", "primary")
+create_stat_card(stats_frame, f"Pending Fees (₹{pending_fees:,.0f})", 
+                f"{pending_fees:,.0f}", "💰", "warning")
+
+# Recent Activity Section
+activity_frame = tb.LabelFrame(dashboard_container, text="📋 Recent Activity", 
+                              padding=20, bootstyle="info")
+activity_frame.pack(fill='both', expand=True, pady=(0, 10))
+
+activity_tree = ttk.Treeview(activity_frame, 
+                            columns=("Time", "Activity", "Details"), 
+                            show='headings', height=10)
+activity_tree.heading("Time", text="Time")
+activity_tree.heading("Activity", text="Activity")
+activity_tree.heading("Details", text="Details")
+activity_tree.column("Time", width=150)
+activity_tree.column("Activity", width=200)
+activity_tree.column("Details", width=400)
+
+# Get recent attendance
+cursor.execute("""
+    SELECT date, name, roll_no 
+    FROM attendance 
+    ORDER BY date DESC, rowid DESC 
+    LIMIT 10
+""")
+for date, name, roll_no in cursor.fetchall():
+    activity_tree.insert("", "end", values=(
+        date, 
+        "Attendance Marked", 
+        f"{name} (Roll: {roll_no})"
+    ))
+
+activity_tree.pack(fill='both', expand=True)
+
+# Quick Actions in Dashboard
+quick_dash_frame = tb.Frame(dashboard_container)
+quick_dash_frame.pack(fill='x', pady=(10, 0))
+
+tb.Button(quick_dash_frame, text="🚀 Mark Attendance",
+         command=lambda: notebook.select(2),
+         bootstyle="success", width=20).pack(side='left', padx=5)
+
+tb.Button(quick_dash_frame, text="➕ Add Student",
+         command=lambda: notebook.select(1),
+         bootstyle="info", width=20).pack(side='left', padx=5)
+
+tb.Button(quick_dash_frame, text="📊 View Reports",
+         command=lambda: notebook.select(3),
+         bootstyle="primary", width=20).pack(side='left', padx=5)
+
+# ==================== STUDENTS TAB ====================
+main_container = tb.Frame(students_tab)
 main_container.pack(fill='both', expand=True, padx=20, pady=20)
 
 # Add keyboard shortcuts
@@ -693,16 +1271,10 @@ header_frame.pack(fill='x', pady=(0, 20))
 title_frame = tb.Frame(header_frame)
 title_frame.pack(fill='x')
 
-separator_left = tb.Separator(title_frame)
-separator_left.pack(side='left', fill='x', expand=True, padx=(0, 10), pady=10)
-
-title_label = tb.Label(title_frame, text="Art Class Attendance System", 
-                      font=("Helvetica", 28, "bold"),
-                      bootstyle="inverse-primary")
-title_label.pack(side='left', padx=20)
-
-separator_right = tb.Separator(title_frame)
-separator_right.pack(side='left', fill='x', expand=True, padx=(10, 0), pady=10)
+title_label = tb.Label(title_frame, text="👥 Student Management", 
+                      font=("Helvetica", 20, "bold"),
+                      bootstyle="inverse-info")
+title_label.pack(pady=10)
 
 # Custom Entry with placeholder
 class PlaceholderEntry(tb.Entry):
@@ -765,19 +1337,41 @@ search_button.pack(side='left')
 actions_frame = tb.Frame(header_frame)
 actions_frame.pack(fill='x', pady=(10, 0))
 
-quick_actions = [
-    ("Today's Attendance", view_today_attendance, "info", "Ctrl+A"),
-    ("Monthly Report", generate_monthly_report, "success", "Ctrl+R"),
-    ("Expiring Courses", view_expiring_courses, "warning", None)
-]
+# Student count display
+cursor.execute("SELECT COUNT(*) FROM students")
+student_count = cursor.fetchone()[0]
+count_label = tb.Label(actions_frame, 
+                       text=f"Total Students: {student_count}",
+                       font=("Helvetica", 12, "bold"),
+                       bootstyle="inverse-success")
+count_label.pack(side='left', padx=10)
 
-for text, command, style, shortcut in quick_actions:
-    btn = tb.Button(actions_frame,
-                   text=f"{text} {f'({shortcut})' if shortcut else ''}",
-                   command=command,
-                   bootstyle=f"{style}-outline",
-                   width=25)
-    btn.pack(side='left', padx=5)
+tb.Button(actions_frame, text="🔄 Refresh",
+         command=view_students,
+         bootstyle="secondary-outline").pack(side='left', padx=5)
+
+tb.Button(actions_frame, text="📤 Export to CSV",
+         command=lambda: export_students_csv(),
+         bootstyle="info-outline").pack(side='left', padx=5)
+
+def export_students_csv():
+    filename = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv")],
+        initialfile=f"students_{datetime.now().strftime('%Y%m%d')}.csv"
+    )
+    if filename:
+        cursor.execute("SELECT * FROM students")
+        students = cursor.fetchall()
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Roll No", "Name", "Phone", "DOB", "Start Date", "End Date", "Email", "Fees Paid", "Total Fees"])
+                writer.writerows(students)
+            messagebox.showinfo("Success", f"Students exported to {filename}")
+            status_label.config(text=f"Exported {len(students)} students")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export: {str(e)}")
 
 # Create left and right panels
 left_panel = tb.Frame(main_container)
@@ -970,6 +1564,298 @@ def schedule_fees_check():
     root.after(24*60*60*1000, schedule_fees_check)  # 24 hours in milliseconds
 
 schedule_fees_check()
+
+# ==================== ATTENDANCE TAB ====================
+attendance_container = tb.Frame(attendance_tab)
+attendance_container.pack(fill='both', expand=True, padx=20, pady=20)
+
+# Attendance Header
+att_header = tb.Label(attendance_container, 
+                      text="✓ Attendance Management",
+                      font=("Helvetica", 20, "bold"),
+                      bootstyle="inverse-success")
+att_header.pack(pady=(0, 20))
+
+# Quick Mark Attendance
+quick_att_frame = tb.LabelFrame(attendance_container, text="Quick Mark Attendance", 
+                               padding=20, bootstyle="success")
+quick_att_frame.pack(fill='x', pady=(0, 20))
+
+att_input_frame = tb.Frame(quick_att_frame)
+att_input_frame.pack(fill='x')
+
+tb.Label(att_input_frame, text="Roll Number:", 
+         font=("Helvetica", 12, "bold")).pack(side='left', padx=(0, 10))
+att_entry = tb.Entry(att_input_frame, font=("Helvetica", 14), width=20)
+att_entry.pack(side='left', padx=(0, 10))
+att_entry.bind("<Return>", lambda e: mark_attendance_from_tab())
+
+def mark_attendance_from_tab():
+    roll_no = att_entry.get().strip()
+    date = datetime.now().strftime("%Y-%m-%d")
+
+    if not roll_no:
+        messagebox.showwarning("Input Error", "Please enter Roll Number.")
+        return
+
+    cursor.execute('SELECT * FROM attendance WHERE roll_no = ? AND date = ?', (roll_no, date))
+    if cursor.fetchone():
+        messagebox.showinfo("Already Marked", "Attendance already marked for today!")
+        return
+
+    cursor.execute('SELECT course_end_date, name FROM students WHERE roll_no = ?', (roll_no,))
+    result = cursor.fetchone()
+
+    if result:
+        course_end_date = datetime.strptime(result[0], "%Y-%m-%d")
+        today = datetime.now()
+
+        if today.date() > course_end_date.date():
+            messagebox.showerror("Course Ended", "Course has ended!")
+            play_sound(frequency=1000, duration=500)
+        else:
+            try:
+                cursor.execute('INSERT INTO attendance (roll_no, name, date, status) VALUES (?, ?, ?, ?)',
+                               (roll_no, result[1], date, "Present"))
+                conn.commit()
+                messagebox.showinfo("Success", f"Attendance marked for {result[1]}")
+                play_sound()
+                att_entry.delete(0, tb.END)
+                att_entry.focus_set()
+                refresh_today_attendance()
+                status_label.config(text=f"Attendance marked for {result[1]}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to mark attendance: {e}")
+    else:
+        messagebox.showwarning("Error", "Student not found!")
+        att_entry.delete(0, tb.END)
+
+tb.Button(att_input_frame, text="Mark Present",
+         command=mark_attendance_from_tab,
+         bootstyle="success", width=15).pack(side='left', padx=5)
+
+# Today's Attendance Display
+today_att_frame = tb.LabelFrame(attendance_container, text=f"Today's Attendance ({datetime.now().strftime('%d %B %Y')})", 
+                               padding=20, bootstyle="info")
+today_att_frame.pack(fill='both', expand=True)
+
+today_att_tree = ttk.Treeview(today_att_frame, 
+                             columns=("Roll No", "Name", "Time", "Status"), 
+                             show='headings', height=15)
+today_att_tree.heading("Roll No", text="Roll No")
+today_att_tree.heading("Name", text="Name")
+today_att_tree.heading("Time", text="Time")
+today_att_tree.heading("Status", text="Status")
+today_att_tree.column("Roll No", width=100)
+today_att_tree.column("Name", width=250)
+today_att_tree.column("Time", width=150)
+today_att_tree.column("Status", width=100)
+
+def refresh_today_attendance():
+    for item in today_att_tree.get_children():
+        today_att_tree.delete(item)
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("SELECT roll_no, name, date, status FROM attendance WHERE date = ?", (today,))
+    for row in cursor.fetchall():
+        today_att_tree.insert("", "end", values=(row[0], row[1], row[2], row[3]))
+
+refresh_today_attendance()
+
+scrollbar = ttk.Scrollbar(today_att_frame, orient="vertical", command=today_att_tree.yview)
+today_att_tree.configure(yscrollcommand=scrollbar.set)
+today_att_tree.pack(side='left', fill='both', expand=True)
+scrollbar.pack(side='right', fill='y')
+
+# ==================== REPORTS TAB ====================
+reports_container = tb.Frame(reports_tab)
+reports_container.pack(fill='both', expand=True, padx=20, pady=20)
+
+# Reports Header
+rep_header = tb.Label(reports_container, 
+                     text="📈 Reports & Analytics",
+                     font=("Helvetica", 20, "bold"),
+                     bootstyle="inverse-primary")
+rep_header.pack(pady=(0, 20))
+
+# Report Cards
+report_cards_frame = tb.Frame(reports_container)
+report_cards_frame.pack(fill='x', pady=(0, 20))
+
+def create_report_card(parent, title, description, command, color):
+    card = tb.LabelFrame(parent, text=title, padding=20, bootstyle=color)
+    card.pack(side='left', fill='both', expand=True, padx=10)
+    
+    tb.Label(card, text=description, 
+             font=("Helvetica", 10), 
+             wraplength=200).pack(pady=(0, 15))
+    
+    tb.Button(card, text="Generate Report",
+             command=command,
+             bootstyle=f"{color}").pack()
+
+create_report_card(report_cards_frame, "📅 Monthly Report",
+                  "View attendance statistics for the current month",
+                  generate_monthly_report, "success")
+
+create_report_card(report_cards_frame, "⚠️ Expiring Courses",
+                  "Students whose courses are ending soon",
+                  view_expiring_courses, "warning")
+
+create_report_card(report_cards_frame, "💰 Financial Report",
+                  "View fees collection and pending payments",
+                  lambda: generate_financial_report(), "info")
+
+def generate_financial_report():
+    report_window = tb.Toplevel(root)
+    report_window.title("Financial Report")
+    report_window.geometry("900x700")
+    
+    main_frame = tb.Frame(report_window, padding=20)
+    main_frame.pack(fill='both', expand=True)
+    
+    tb.Label(main_frame, text="💰 Financial Report", 
+             font=("Helvetica", 18, "bold"),
+             bootstyle="inverse-info").pack(pady=(0, 20))
+    
+    # Summary statistics
+    summary_frame = tb.Frame(main_frame)
+    summary_frame.pack(fill='x', pady=(0, 20))
+    
+    cursor.execute("SELECT SUM(total_fees), SUM(fees_paid), SUM(total_fees - fees_paid) FROM students")
+    total, paid, pending = cursor.fetchone()
+    
+    stats = [
+        ("Total Fees", f"₹{float(total or 0):,.2f}", "info"),
+        ("Collected", f"₹{float(paid or 0):,.2f}", "success"),
+        ("Pending", f"₹{float(pending or 0):,.2f}", "danger")
+    ]
+    
+    for label, value, color in stats:
+        card = tb.Frame(summary_frame, bootstyle=color)
+        card.pack(side='left', fill='both', expand=True, padx=10)
+        tb.Label(card, text=label, font=("Helvetica", 10), 
+                bootstyle=color).pack(pady=5)
+        tb.Label(card, text=value, font=("Helvetica", 16, "bold"),
+                bootstyle=color).pack(pady=5)
+    
+    # Detailed list
+    detail_frame = tb.LabelFrame(main_frame, text="Student Fees Details", padding=15)
+    detail_frame.pack(fill='both', expand=True)
+    
+    tree = ttk.Treeview(detail_frame, 
+                       columns=("Roll No", "Name", "Total", "Paid", "Pending", "Status"),
+                       show='headings', height=20)
+    
+    for col in ("Roll No", "Name", "Total", "Paid", "Pending", "Status"):
+        tree.heading(col, text=col)
+        tree.column(col, width=120)
+    
+    cursor.execute("SELECT roll_no, name, total_fees, fees_paid FROM students")
+    for roll, name, total, paid in cursor.fetchall():
+        pending = float(total) - float(paid)
+        status = "✓ Paid" if pending <= 0 else "⚠ Pending"
+        tree.insert("", "end", values=(
+            roll, name, 
+            f"₹{float(total):,.2f}", 
+            f"₹{float(paid):,.2f}",
+            f"₹{pending:,.2f}",
+            status
+        ))
+    
+    tree.pack(fill='both', expand=True)
+
+# ==================== FEES TAB ====================
+fees_container = tb.Frame(fees_tab)
+fees_container.pack(fill='both', expand=True, padx=20, pady=20)
+
+# Fees Header
+fees_header = tb.Label(fees_container, 
+                      text="💰 Fees Management",
+                      font=("Helvetica", 20, "bold"),
+                      bootstyle="inverse-warning")
+fees_header.pack(pady=(0, 20))
+
+# Fees summary cards
+fees_summary_frame = tb.Frame(fees_container)
+fees_summary_frame.pack(fill='x', pady=(0, 20))
+
+cursor.execute("SELECT SUM(total_fees), SUM(fees_paid), COUNT(*) FROM students WHERE total_fees > fees_paid")
+total_pending_fees, total_paid, pending_count = cursor.fetchone()
+pending_amount = (float(total_pending_fees or 0) - float(total_paid or 0))
+
+fees_stats = [
+    ("Students with Pending Fees", str(pending_count or 0), "warning"),
+    ("Total Pending Amount", f"₹{pending_amount:,.2f}", "danger"),
+    ("Collection Rate", f"{(float(total_paid or 0) / float(total_pending_fees or 1) * 100):.1f}%", "success")
+]
+
+for label, value, color in fees_stats:
+    card = tb.Frame(fees_summary_frame, bootstyle=color)
+    card.pack(side='left', fill='both', expand=True, padx=10)
+    inner = tb.Frame(card, bootstyle=color)
+    inner.pack(fill='both', expand=True, padx=15, pady=15)
+    tb.Label(inner, text=value, font=("Helvetica", 24, "bold"),
+            bootstyle=color).pack()
+    tb.Label(inner, text=label, font=("Helvetica", 11),
+            bootstyle=color).pack()
+
+# Pending fees list
+pending_frame = tb.LabelFrame(fees_container, text="Students with Pending Fees", 
+                             padding=20, bootstyle="warning")
+pending_frame.pack(fill='both', expand=True)
+
+pending_tree = ttk.Treeview(pending_frame,
+                           columns=("Roll No", "Name", "Total Fees", "Paid", "Pending", "Action"),
+                           show='headings', height=15)
+
+for col in ("Roll No", "Name", "Total Fees", "Paid", "Pending", "Action"):
+    pending_tree.heading(col, text=col)
+    pending_tree.column(col, width=130)
+
+cursor.execute("""
+    SELECT roll_no, name, total_fees, fees_paid 
+    FROM students 
+    WHERE total_fees > fees_paid
+    ORDER BY (total_fees - fees_paid) DESC
+""")
+
+for roll, name, total, paid in cursor.fetchall():
+    pending = float(total) - float(paid)
+    pending_tree.insert("", "end", values=(
+        roll, name,
+        f"₹{float(total):,.2f}",
+        f"₹{float(paid):,.2f}",
+        f"₹{pending:,.2f}",
+        "Click to Pay"
+    ))
+
+pending_tree.pack(fill='both', expand=True)
+
+def on_fees_double_click(event):
+    selection = pending_tree.selection()
+    if selection:
+        item = pending_tree.item(selection[0])
+        roll_no = item['values'][0]
+        # Simulate selecting the student and opening fees details
+        show_fees_details_direct(roll_no)
+
+def show_fees_details_direct(roll_no):
+    cursor.execute("""
+        SELECT name, email, total_fees, fees_paid, course_end_date 
+        FROM students 
+        WHERE roll_no = ?
+    """, (roll_no,))
+    
+    student_data = cursor.fetchone()
+    if not student_data:
+        messagebox.showerror("Error", "Student not found!")
+        return
+    
+    student_name, email, total_fees, fees_paid, course_end_date = student_data
+    show_fees_details()
+
+pending_tree.bind("<Double-1>", on_fees_double_click)
 
 # Initialize the view
 view_students()
